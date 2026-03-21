@@ -41,7 +41,7 @@ export default function SchemeForm() {
       }
 
       // 2. Call Backend Scoring + AI API
-      const response = await fetch("http://localhost:3000/check", {
+      const response = await fetch("https://ethical-ai-backend.onrender.com/check", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
