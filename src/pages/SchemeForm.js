@@ -1,144 +1,167 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { auth } from "../firebase";
+
 
 export default function SchemeForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const chatEndRef = useRef(null);
 
-  const [form, setForm] = useState({
-    age: "",
-    income: "",
-    occupation: "",
-    location: "",
-  });
-
-  const [files, setFiles] = useState([]);
+  const [messages, setMessages] = useState([
+    { role: "assistant", content: "Hi! I'm your AI Readiness Assistant. Let's see if you're ready for this scheme. Please tell me your age, annual income, occupation, and location to get started. You can also upload any documents for verification." }
+  ]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [formData, setFormData] = useState({});
+  const [lastAnalysis, setLastAnalysis] = useState(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const convertToBase64 = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(',')[1]); // Only send base64 data
+      reader.onload = () => resolve(reader.result.split(',')[1]);
       reader.onerror = error => reject(error);
     });
   };
 
-  const handleSubmit = async () => {
-    if (!auth.currentUser) {
-      alert("Please login to continue.");
-      return;
-    }
+  const handleSend = async (e, files = []) => {
+    if (e) e.preventDefault();
+    if (!input.trim() && files.length === 0) return;
+
+    const userMessage = input.trim();
+    setInput("");
+    setMessages(prev => [...prev, { role: "user", content: userMessage || "Uploaded documents for verification." }]);
     setLoading(true);
+
     try {
-      // 1. Direct Validation: Convert files to base64
       const base64Images = [];
       for (let i = 0; i < files.length; i++) {
         const base64 = await convertToBase64(files[i]);
         base64Images.push(base64);
       }
 
-      // 2. Call Backend Scoring + AI API
       const response = await fetch("https://ethical-ai-backend.onrender.com/check", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...form,
+          message: userMessage,
+          chatHistory: messages,
           schemeId: id,
-          images: base64Images // Send real base64 images for AI verification
+          form: formData,
+          images: base64Images
         }),
       });
 
       const data = await response.json();
-      setResult(data);
+      
+      if (data.userData) setFormData(data.userData);
+      if (data.ai) setLastAnalysis({ ...data.ai, score: data.score });
+
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: data.ai?.reply || "I've analyzed your details.",
+        score: data.score,
+        status: data.ai?.eligibilityStatus,
+        summary: data.ai?.summary
+      }]);
 
     } catch (err) {
-      console.error(err);
-      alert("Something went wrong. Please try again.");
+      setMessages(prev => [...prev, { role: "assistant", content: "Sorry, I'm having trouble connecting to the server. Please try again." }]);
     } finally {
       setLoading(false);
     }
   };
 
-  if (result) {
-    const riskLevel = result.score > 80 ? "Low" : result.score > 50 ? "Medium" : "High";
-    const riskColor = riskLevel === "Low" ? "#27ae60" : riskLevel === "Medium" ? "#f39c12" : "#e74c3c";
-
-    return (
-      <div className="container">
-        <h2>Readiness Score: {result.score}/100</h2>
-        <div className="progress-bar-bg">
-          <div className="progress-bar" style={{ width: `${result.score}%`, backgroundColor: riskColor }}></div>
-        </div>
-        
-        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-          <span style={{ 
-            padding: '8px 16px', 
-            borderRadius: '20px', 
-            backgroundColor: riskColor, 
-            color: 'white', 
-            fontWeight: 'bold' 
-          }}>
-            Risk Level: {riskLevel}
-          </span>
+  return (
+    <div className="container" style={{ maxWidth: '900px', height: '85vh', display: 'flex', gap: '20px' }}>
+      {/* Chat Section */}
+      <div style={{ flex: 2, display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white', borderRadius: '12px', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
+          <h3 style={{ margin: 0 }}>{id?.toUpperCase()} Assistant</h3>
+          <button onClick={() => navigate("/dashboard")} style={{ width: 'auto', padding: '5px 15px' }}>Exit</button>
         </div>
 
-        <div className="ai-report">
-          <h3>AI Analysis Report</h3>
-          <p><strong>Eligibility Status:</strong> {result.ai?.eligibilityStatus || "Unknown"}</p>
-          <p><strong>Summary:</strong> {result.ai?.summary || "No summary available."}</p>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '15px 0', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          {messages.map((msg, i) => (
+            <div key={i} style={{ 
+              alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+              backgroundColor: msg.role === "user" ? "#3498db" : "#f1f1f1",
+              color: msg.role === "user" ? "white" : "black",
+              padding: '12px 16px',
+              borderRadius: '18px',
+              maxWidth: '85%',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+            }}>
+              <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{msg.content}</p>
+            </div>
+          ))}
+          {loading && <div style={{ alignSelf: 'flex-start', color: '#888', fontStyle: 'italic' }}>AI is thinking...</div>}
+          <div ref={chatEndRef} />
+        </div>
+
+        <form onSubmit={handleSend} style={{ borderTop: '1px solid #eee', paddingTop: '15px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <input 
+            type="file" 
+            multiple 
+            id="file-upload" 
+            style={{ display: 'none' }} 
+            accept="image/*"
+            onChange={(e) => handleSend(null, e.target.files)}
+          />
+          <label htmlFor="file-upload" style={{ cursor: 'pointer', fontSize: '20px', padding: '5px' }}>📎</label>
+          <input 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)} 
+            placeholder="Type your message..." 
+            style={{ flex: 1, margin: 0, padding: '10px 15px', borderRadius: '20px', border: '1px solid #ddd' }}
+          />
+          <button type="submit" disabled={loading} style={{ width: 'auto', margin: 0, padding: '10px 20px', borderRadius: '20px' }}>Send</button>
+        </form>
+      </div>
+
+      {/* Persistent Summary Card Section */}
+      {lastAnalysis && (
+        <div style={{ flex: 1, height: '100%', backgroundColor: '#f9f9f9', borderRadius: '12px', padding: '20px', overflowY: 'auto', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', border: '1px solid #eee' }}>
+          <h3 style={{ marginTop: 0, borderBottom: '2px solid #3498db', paddingBottom: '10px' }}>Live Readiness Report</h3>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            <div>
-              <h4>Risks Identified:</h4>
-              <ul style={{ paddingLeft: '20px' }}>{(result.ai?.risks || []).map((r, i) => <li key={i}>{r}</li>)}</ul>
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+              <span>Score</span>
+              <span>{lastAnalysis.score}/100</span>
             </div>
-            <div>
-              <h4>Preparation Plan:</h4>
-              <ul style={{ paddingLeft: '20px' }}>{(result.ai?.improvements || []).map((imp, i) => <li key={i}>{imp}</li>)}</ul>
+            <div style={{ backgroundColor: '#e0e0e0', height: '10px', borderRadius: '5px', marginTop: '8px' }}>
+              <div style={{ 
+                backgroundColor: lastAnalysis.score > 80 ? '#27ae60' : lastAnalysis.score > 50 ? '#f39c12' : '#e74c3c', 
+                width: `${lastAnalysis.score}%`, 
+                height: '100%', 
+                borderRadius: '5px',
+                transition: 'width 0.5s ease-in-out'
+              }}></div>
             </div>
+            <p style={{ textAlign: 'center', marginTop: '5px', fontWeight: 'bold', color: lastAnalysis.score > 80 ? '#27ae60' : lastAnalysis.score > 50 ? '#f39c12' : '#e74c3c' }}>
+              Risk Level: {lastAnalysis.eligibilityStatus}
+            </p>
           </div>
 
-          {result.issues && result.issues.length > 0 && (
-            <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#fff5f5', borderRadius: '8px' }}>
-              <h4 className="text-red">Critical Issues Found:</h4>
-              <ul style={{ paddingLeft: '20px' }}>{(result.issues || []).map((iss, i) => <li key={i} className="text-red">{iss}</li>)}</ul>
-            </div>
-          )}
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ color: '#2c3e50', marginBottom: '8px' }}>Critical Risks</h4>
+            <ul style={{ paddingLeft: '20px', fontSize: '0.9em' }}>
+              {lastAnalysis.risks?.map((r, i) => <li key={i} style={{ marginBottom: '5px' }}>{r}</li>)}
+            </ul>
+          </div>
+
+          <div>
+            <h4 style={{ color: '#2c3e50', marginBottom: '8px' }}>Action Plan</h4>
+            <ul style={{ paddingLeft: '20px', fontSize: '0.9em' }}>
+              {lastAnalysis.improvements?.map((imp, i) => <li key={i} style={{ marginBottom: '5px', color: '#2980b9' }}>{imp}</li>)}
+            </ul>
+          </div>
         </div>
-        <button onClick={() => navigate("/dashboard")} style={{ marginTop: '20px' }}>Back to Dashboard</button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="container">
-      <h2>Scheme Application Readiness</h2>
-      <div className="form-group">
-        <input placeholder="Age" type="number" onChange={(e) => setForm({ ...form, age: e.target.value })} />
-        <input placeholder="Annual Income" type="number" onChange={(e) => setForm({ ...form, income: e.target.value })} />
-        <input placeholder="Occupation" onChange={(e) => setForm({ ...form, occupation: e.target.value })} />
-        <input placeholder="Location" onChange={(e) => setForm({ ...form, location: e.target.value })} />
-      </div>
-
-      <div className="file-upload">
-        <h4>Upload Documents for Verification</h4>
-        <input 
-          type="file" 
-          multiple 
-          accept="image/jpeg,image/png"
-          onChange={(e) => setFiles(e.target.files)} 
-        />
-        <small>Supported formats: JPG, PNG (Max 5MB)</small>
-      </div>
-
-      <button disabled={loading} onClick={handleSubmit}>
-        {loading ? "Analyzing..." : "Check Readiness"}
-      </button>
+      )}
     </div>
-    );
-    }
+  );
+}
